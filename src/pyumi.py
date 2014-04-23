@@ -34,7 +34,7 @@ GENERAL                         = 0x07
 CMD_STAT_GENERAL                = 0x17
 
 """ Mode settings: parameter = controller number. """
-CMD_MODE_SET	                = 0x18
+CMD_MODE_SET                    = 0x18
 
 CMD_MODE_SET_POS                = 0x18
 CMD_MODE_SET_FRC                = 0x19
@@ -60,22 +60,22 @@ CMD_TOGGLE_ON                   = 0x2a
 
 """ CMD_SET_BAUD                = 0x30  """
 
-CMD_VERSION		                = 0x38
+CMD_VERSION                     = 0x38
 
 """
  * Parameter commands
  """
 
-CMD_IM_READ_ERR                 = 0x40	# + ctl
-CMD_IM_READ_CP                  = 0x48	# + ctl
+CMD_IM_READ_ERR                 = 0x40  # + ctl
+CMD_IM_READ_CP                  = 0x48  # + ctl
 
-CMD_IM_WRITE_CP                 = 0x58	# + ctl
+CMD_IM_WRITE_CP                 = 0x58  # + ctl
 
-CMD_DEF_READ1                   = 0x60	# Param = #of ctl param
-CMD_DEF_READ2                   = 0x68	# + ctl
+CMD_DEF_READ1                   = 0x60  # Param = #of ctl param
+CMD_DEF_READ2                   = 0x68  # + ctl
 
-CMD_DEF_WRITE1                  = 0x70	# Param = #of ctl param
-CMD_DEF_WRITE2                  = 0x78	# + ctl
+CMD_DEF_WRITE1                  = 0x70  # Param = #of ctl param
+CMD_DEF_WRITE2                  = 0x78  # + ctl
 """
  * Directive commands
  """
@@ -87,7 +87,7 @@ CMD_DIR_NUM                     = 0xa0
  * Interpolation commands.
  """
 
-CMD_INTERP		                = 0xe0
+CMD_INTERP                      = 0xe0
 
 """
  * SV responses (1 byte)
@@ -149,13 +149,13 @@ RESP_IDENTIFY_0                 = 0x20
 RESP_IDENTIFY_1                 = 0x21
 
 RESP_RW_MASK                    = 0xf0
-RESP_IM_READ                    = 0x80	#""" + cksum """
-RESP_IM_WRITE                   = 0xa0	#""" + cksum """
+RESP_IM_READ                    = 0x80  #""" + cksum """
+RESP_IM_WRITE                   = 0xa0  #""" + cksum """
 
 RESP_DEF_READ1                  = 0xc0
-RESP_DEF_READ2                  = 0xd0	#""" + cksum """
+RESP_DEF_READ2                  = 0xd0  #""" + cksum """
 RESP_DEF_WRITE1                 = 0xe0
-RESP_DEF_WRITE2                 = 0xf0	#""" + cksum """
+RESP_DEF_WRITE2                 = 0xf0  #""" + cksum """
 
 current_millis = lambda: int(round(time.time() * 1000))
 
