@@ -90,7 +90,7 @@ CMD_DIR_NUM                     = 0xa0
 CMD_INTERP                      = 0xe0
 
 """
- * SV responses (1 byte)
+ * SV ronses (1 byte)
  """
 
 RESP_TYPE_MASK                  = 0xf0
@@ -157,13 +157,8 @@ RESP_DEF_READ2                  = 0xd0  #""" + cksum """
 RESP_DEF_WRITE1                 = 0xe0
 RESP_DEF_WRITE2                 = 0xf0  #""" + cksum """
 
-current_millis = lambda: int(round(time.time() * 1000))
-
-def umi_cmd(cmd):
-    a = bytearray()
-    for c in cmd:
-        a.append(c)
-    return a
+_millis = lambda   : int(round(time.time() * 1000))
+_cmd    = lambda x : bytearray([chr(c) for c in list(x)])
 
 class UMI(object):
     def __init__(self, port):
@@ -177,12 +172,13 @@ class UMI(object):
 
         self.serial = s
         self.current_ip = 0
-        self.toggle_mode = 0
 
+        self.toggle_mode = False
         self.initialised = False
         self.initialising = False
+        self.nid = 0
         self.svsim = 0
-        self.erresp = 0
+        self.err = 0
         self.lasterr = 0
         self.errcmd = 0
         self.ncmds = 0
@@ -202,39 +198,41 @@ class UMI(object):
 
         if not (self.initialising ^ self.initialised):
             sys.stderr.write('Communications not initialised\n')
-            #return None
+            return ()
 
         if ip != IPDONTCARE and ip != self.current_ip:
             if (toggle_mode):
-                resp = self.raw(IPDONTCARE, umi_cmd((CMD_IDENTIFY)))
-                if len(resp) == 0:
+                r = self.raw(IPDONTCARE, _cmd([CMD_IDENTIFY]))
+                if not r:
                     return ()
-                if resp[0] != (RESP_IDENTIFY_0 + (1 - self.current_ip)):
+                if r[0] != (RESP_IDENTIFY_0 + (1 - self.current_ip)):
                     if not rtx_resync(1):
                         return ()
             else:
                 self.current_ip = 1 - self.current_ip
-                if not self.raw(IPDONTCARE, umi_cmd((CMD_TOGGLE_ONCE))):
+                if not self.raw(IPDONTCARE, _cmd([CMD_TOGGLE_ONCE])):
                     return ()
 
-        time.sleep((self.lasttime + 8 - current_millis()) / 1000.0)
-        self.lasttime = current_millis()
+        time.sleep((self.lasttime + 8 - _millis()) / 1000.0)
+        self.lasttime = _millis()
         sys.stdout.write('UMI writing: %s\n' % (repr(cmd)))
         self.serial.write(cmd)
 
         if not self.initialising and self.toggle_mode == True:
             self.current_ip = 1 - self.current_ip
 
-        self.serial.timeout = (self.lasttime + 8 - current_millis()) / 1000.0
-        resp = self.serial.read(3)
-        sys.stdout.write('read: %s\n' % (repr(resp)))
+        self.serial.timeout = (self.lasttime + 8 - _millis()) / 1000.0
+        r = self.serial.read(3)
+        sys.stdout.write('read: %s\n' % (repr(r)))
 
-        if len(resp) == 0:
+        r = tuple([ord(b) for b in r])
+
+        if  not r:
             sys.stderr.write('no response\n')
             self.resync(1)
             return ()
 
-        if len(resp) > 3:
+        if len(r) > 3:
             self.resync(1)
             sys.stderr.write('response overrun\n')
             return ()
@@ -242,32 +240,32 @@ class UMI(object):
         sys.stdout.write('checking response\n')
         expect = 1
 
-        resp_type = ord(resp[0]) & RESP_TYPE_MASK
-        if resp_type == RESP_TYPE_SV_ID:
+        cmd_type = r[0] & RESP_TYPE_MASK
+        if cmd_type == RESP_TYPE_SV_ID:
             self.nid = self.nid + 1
             if cmd[0] == CMD_VERSION:
-                ioerr = len(resp) != 3
+                ioerr = len(r) != 3
             else:
-                ioerr = len(resp) != 1
-        elif resp_type == RESP_TYPE_SV_SIMPLE:
+                ioerr = len(r) != 1
+        elif cmd_type == RESP_TYPE_SV_SIMPLE:
             self.svsim = self.svsim + 1
-            if resp[0] >= 0x01 and resp[0] <= 0x0f:
-                self.erresp = self.erresp + 1
-                self.lasterr = resp[0]
+            if r[0] >= 0x01 and r[0] <= 0x0f:
+                self.err = self.err + 1
+                self.lasterr = r[0]
                 self.errcmd = (ip, cmd)
-            self.ioerr = len(resp) != 1
-        elif ((resp_type == RESP_TYPE_IM_WRITE) or
-             (resp_type == RESP_TYPE_DEF_W1)   or
-             (resp_type == RESP_TYPE_DEF_W2)):
-            ioerr = len(resp) != 1
-        elif resp_type == RESP_TYPE_DEF_R1:
+            self.ioerr = len(r) != 1
+        elif ((cmd_type == RESP_TYPE_IM_WRITE) or
+              (cmd_type == RESP_TYPE_DEF_W1)   or
+              (cmd_type == RESP_TYPE_DEF_W2)):
+            ioerr = len(r) != 1
+        elif cmd_type == RESP_TYPE_DEF_R1:
             self.nreads = self.nreads + 1
-            ioerr = len(resp) != 1
-        elif ((resp_type == RESP_TYPE_SV_STAT) or
-             (resp_type == RESP_TYPE_IM_READ) or
-             (resp_type == RESP_TYPE_DEF_R2)):
+            ioerr = len(r) != 1
+        elif ((cmd_type == RESP_TYPE_SV_STAT) or
+              (cmd_type == RESP_TYPE_IM_READ) or
+              (cmd_type == RESP_TYPE_DEF_R2)):
             self.nreads = self.nreads + 1
-            ioerr = len(resp) != 3
+            ioerr = len(r) != 3
             expect = 3
         else:
             self.rtxerr = RESPONSE_UNKNOWN
@@ -275,9 +273,9 @@ class UMI(object):
 
         if ioerr > 0:
             self.resync(1)
-            if expect > len(resp):
+            if expect > len(r):
                 self.rtxerr = RESPONSE_INCOMPLETE
-            elif expect < len(resp):
+            elif expect < len(r):
                 self.rtxerr = RESPONSE_OVERRUN
             else:
                 self.rtxerr = RESPONSE_UNKNOWN
@@ -286,7 +284,7 @@ class UMI(object):
         sys.stdout.write('UMI: command completed\n')
         self.ncmds = self.ncmds + 1
 
-        return resp
+        return r
 
     def toggle_mode(self, mode):
         ip1 = 0
@@ -299,37 +297,37 @@ class UMI(object):
         self.rtxerr = COMMS_FAULT
 
         if self.toggle.mode:
-            resp = rtx_raw(IPDONTCARE, umi_cmd((CMD_TOGGLE_OFF)))
-            if len(resp) != 1 or ord(resp[0]) != RESP_ACK:
+            r = rtx_raw(IPDONTCARE, _cmd([CMD_TOGGLE_OFF]))
+            if len(r) != 1 or r[0] != RESP_ACK:
                 return -1
 
-            resp = rtx_raw(IPDONTCARE, umi_cmd((CMD_TOGGLE_ONCE)))
-            if len(resp) != 1 or ord(resp[0]) != RESP_ACK:
+            r = rtx_raw(IPDONTCARE, _cmd([CMD_TOGGLE_ONCE]))
+            if len(r) != 1 or r[0] != RESP_ACK:
                 return -1
 
-            resp = rtx_raw(IPDONTCARE, umi_cmd((CMD_TOGGLE_OFF)))
-            if len(resp) != 1 or ord(resp[0]) != RESP_ACK:
+            r = rtx_raw(IPDONTCARE, _cmd([CMD_TOGGLE_OFF]))
+            if len(r) != 1 or r[0] != RESP_ACK:
                 return -1
 
-            resp = rtx_raw(IPDONTCARE, umi_cmd((CMD_IDENTIFY)))
-            if ((len(resp) != 1) or
-               (ord(resp[0]) != RESP_IDENTIFY_0) and
-               (ord(resp[0]) != RESP_IDENTIFY_1)):
+            r = rtx_raw(IPDONTCARE, _cmd([CMD_IDENTIFY]))
+            if ((len(r) != 1) or
+               (r[0] != RESP_IDENTIFY_0) and
+               (r[0] != RESP_IDENTIFY_1)):
                 return -1
 
-            ip1 = ord(resp[0]) & RESP_IDENTIFY_MASK
+            ip1 = r[0] & RESP_IDENTIFY_MASK
 
-            resp = rtx_raw(IPDONTCARE, umi_cmd((CMD_TOGGLE_ONCE)))
-            if len(resp) == 0:
+            r = rtx_raw(IPDONTCARE, _cmd([CMD_TOGGLE_ONCE]))
+            if not r:
                 return -1
 
-            resp = rtx_raw(IPDONTCARE, umi_cmd((CMD_IDENTIFY)))
-            if ((len(resp) != 1) or
-               (ord(resp[0]) != RESP_IDENTIFY_0) and
-               (ord(resp[0]) != RESP_IDENTIFY_1)):
+            r = rtx_raw(IPDONTCARE, _cmd([CMD_IDENTIFY]))
+            if ((len(r) != 1) or
+               (r[0] != RESP_IDENTIFY_0) and
+               (r[0] != RESP_IDENTIFY_1)):
                 return -1
 
-            ip2 = ord(resp[0]) & RESP_IDENTIFY_MASK
+            ip2 = r[0] & RESP_IDENTIFY_MASK
 
             if ip1 == ip2:
                 return -1
@@ -337,42 +335,40 @@ class UMI(object):
             self.current_ip = ip2
 
         else:
-            resp = rtx_raw(IPDONTCARE, umi_cmd((CMD_TOGGLE_ON)))
-            if len(resp) == 0:
+            if not rtx_raw(IPDONTCARE, _cmd([CMD_TOGGLE_ON])):
                 return -1
 
-            resp = rtx_raw(IPDONTCARE, umi_cmd((CMD_TOGGLE_ON)))
-            if len(resp) == 0:
+            if not rtx_raw(IPDONTCARE, _cmd([CMD_TOGGLE_ON])):
                 return -1
 
-            resp = rtx_raw(IPDONTCARE, umi_cmd((CMD_IDENTIFY)))
-            if ((len(resp) != 1) or
-               (ord(resp[0]) != RESP_IDENTIFY_0) and
-               (ord(resp[0]) != RESP_IDENTIFY_1)):
+            r = rtx_raw(IPDONTCARE, _cmd([CMD_IDENTIFY]))
+            if ((len(r) != 1) or
+               (r[0] != RESP_IDENTIFY_0) and
+               (r[0] != RESP_IDENTIFY_1)):
                 return -1
 
-            ip1 = ord(resp[0]) & RESP_IDENTIFY_MASK
+            ip1 = r[0] & RESP_IDENTIFY_MASK
 
-            resp = rtx_raw(IPDONTCARE, umi_cmd((CMD_IDENTIFY)))
-            if ((len(resp) != 1) or
-               (ord(resp[0]) != RESP_IDENTIFY_0) and
-               (ord(resp[0]) != RESP_IDENTIFY_1)):
+            r = rtx_raw(IPDONTCARE, _cmd([CMD_IDENTIFY]))
+            if ((len(r) != 1) or
+               (r[0] != RESP_IDENTIFY_0) and
+               (r[0] != RESP_IDENTIFY_1)):
                 return -1
 
-            ip2 = ord(resp[0]) & RESP_IDENTIFY_MASK
+            ip2 = r[0] & RESP_IDENTIFY_MASK
 
             if ip1 == ip2:
                 return -1
 
             self.current_ip = ip1
 
-        self.toggle_mode = m
+        self.toggle_mode = mode
         return old
 
 
     def resync(self, err):
         ip = self.current_ip
-        m = self.toggle_mode
+        mode = self.toggle_mode
 
         sys.stdout.write("UMI: resync\n")
 
@@ -388,29 +384,22 @@ class UMI(object):
 
         time.sleep(0.008)
 
-        while self.serial.inWaiting():
-            self.serial.read(self.serial.inWaiting())
-
-        self.set_toggle_mode(1 - m)
+        self.serial.flushInput()
+        self.set_toggle_mode(not mode)
 
         if ip != self.current_ip:
             if self.toggle_mode:
-                cmd = bytearray()
-                cmd.append(CMD_IDENTIFY)
-                resp = self.raw(IPDONTCARE,cmd)
-                if len(resp) == 0:
+                r = self.raw(IPDONTCARE, _cmd([CMD_IDENTIFY]))
+                if not r:
                     self.resync.lock = 0
                     return False
-                if ord(resp[0]) & RESP_IDENTIFY_MASK != 1 - self.current_ip:
+                if r[0] & RESP_IDENTIFY_MASK != 1 - self.current_ip:
                     self.rtxerr = COMMS_NOT_INITIALISED
                     self.resync.lock = 0
                     return False
             else:
                 self.current_ip = 1 - self.current_ip
-                cmd = bytearray()
-                cmd.append(CMD_TOGGLE_ONCE)
-                resp = self.raw(IPDONTCARE, cmd)
-                if len(resp) == 0:
+                if not self.raw(IPDONTCARE, _cmd([CMD_TOGGLE_ONCE])):
                     self.resync.lock = 0
                     return False
 
@@ -422,88 +411,88 @@ class UMI(object):
 
         self.initialising = True
         self.initialised = False
-        self.lasttime = current_millis()
+        self.lasttime = _millis()
 
-        resp = rtx_raw(IPDONTCARE, umi_cmd((CMD_TOGGLE_OFF)))
-        if len(resp) == 0:
-            resp = rtx_raw(IPDONTCARE, umi_cmd((CMD_TOGGLE_OFF)))
-            if len(resp) == 0:
+        r = rtx_raw(IPDONTCARE, _cmd([CMD_TOGGLE_OFF]))
+        if not r:
+            r = rtx_raw(IPDONTCARE, _cmd([CMD_TOGGLE_OFF]))
+            if not r:
                 return False
 
-        if (len(resp) != 0 or
-            (ord(resp[0]) != RESP_ACK and
-             ord(resp[0]) != RESP_IP_RESTART and
-             ord(resp[0]) != RESP_IP_RESTART1)):
+        if (len(r) != 1 or
+            (r[0] != RESP_ACK and
+             r[0] != RESP_IP_RESTART and
+             r[0] != RESP_IP_RESTART1)):
             self.rtxerr = COMMS_FAULT
             return False
 
-        resp = rtx_raw(IPDONTCARE, umi_cmd((CMD_IDENTIFY)))
-        if len(resp) == 0:
+        r = rtx_raw(IPDONTCARE, _cmd([CMD_IDENTIFY]))
+        if not r:
             return False
 
-        if len(resp) != 1:
+        if len(r) != 1:
             self.rtxerr = RESPONSE_OVERRUN
             return False
 
-        self.toggle_mode = 0
+        self.toggle_mode = False
 
-        if ord(resp[0]) == RESP_IP_RESTART or ord(resp[0]) == RESP_IP_RESTART1:
-            resp = rtx_raw(IPDONTCARE, umi_cmd((CMD_GO)))
-            if len(resp) == 0:
+        if r[0] == RESP_IP_RESTART or r[0] == RESP_IP_RESTART1:
+            r = rtx_raw(IPDONTCARE, _cmd([CMD_GO]))
+            if not r:
                 return False
-            if len(resp) != 1 or ord(resp[0]) != RESP_ACK:
+            if len(r) != 1 or r[0] != RESP_ACK:
                 self.rtxerr = COMMS_FAULT
                 return False
-            resp = rtx_raw(IPDONTCARE, umi_cmd((CMD_IDENTIFY)))
-            if len(resp) == 0:
+            r = rtx_raw(IPDONTCARE, _cmd([CMD_IDENTIFY]))
+            if not r:
                 return False
-            if (len(resp) != 1 or
-                (ord(resp[0]) != RESP_IDENTIFY_0 and
-                 ord(resp[0]) != RESP_IDENTIFY_1)):
+            if (len(r) != 1 or
+                (r[0] != RESP_IDENTIFY_0 and
+                 r[0] != RESP_IDENTIFY_1)):
                 self.rtxerr = COMMS_FAULT
                 return False
-            ip = ord(resp[0]) & RESP_IDENTIFY_MASK
-        elif ord(resp[0]) == RESP_IDENTIFY_0 or ord(resp[0]) == RESP_IDENTIFY_1:
-            ip = ord(resp[0]) & RESP_IDENTIFY_MASK
+            ip = r[0] & RESP_IDENTIFY_MASK
+        elif r[0] == RESP_IDENTIFY_0 or r[0] == RESP_IDENTIFY_1:
+            ip = r[0] & RESP_IDENTIFY_MASK
         else:
             self.rtxerr = COMMS_FAULT
             return False
 
-        resp = rtx_raw(IPDONTCARE, umi_cmd((CMD_TOGGLE_ONCE)))
-        if len(resp) != 1 or ord(resp[0]) != RESP_ACK:
+        r = rtx_raw(IPDONTCARE, _cmd([CMD_TOGGLE_ONCE]))
+        if len(r) != 1 or r[0] != RESP_ACK:
             self.rtxerr = COMMS_FAULT
             return False
 
-        resp = rtx_raw(IPDONTCARE, umi_cmd((CMD_TOGGLE_OFF)))
-        if len(resp) != 1 or (ord(resp[0]) != RESP_ACK and
-                              ord(resp[0]) != RSP_IP_RESTART and
-                              ord(resp[0]) != RSP_IP_RESTART1):
+        r = rtx_raw(IPDONTCARE, _cmd([CMD_TOGGLE_OFF]))
+        if len(r) != 1 or (r[0] != RESP_ACK and
+                           r[0] != RSP_IP_RESTART and
+                           r[0] != RSP_IP_RESTART1):
             self.rtxerr = COMMS_FAULT
             return False
 
-        resp = rtx_raw(IPDONTCARE, umi_cmd((CMD_IDENTIFY)))
-        if len(resp) != 1:
+        r = rtx_raw(IPDONTCARE, _cmd([CMD_IDENTIFY]))
+        if len(r) != 1:
             self.rtxerr = COMMS_FAULT
             return False
 
-        if ord(resp[0]) == RESP_IP_RESTART or ord(resp[0]) == RESP_IP_RESTART1:
-            resp = rtx_raw(IPDONTCARE, umi_cmd((CMD_GO)))
-            if len(resp) == 0:
+        if r[0] == RESP_IP_RESTART or r[0] == RESP_IP_RESTART1:
+            r = rtx_raw(IPDONTCARE, _cmd([CMD_GO]))
+            if not r:
                 return False
-            if len(resp) != 1 or ord(resp[0]) != RESP_ACK:
+            if len(r) != 1 or r[0] != RESP_ACK:
                 self.rtxerr = COMMS_FAULT
                 return False
-            resp2 = rtx_raw(IPDONTCARE, umi_cmd((CMD_IDENTIFY)))
-            if len(resp) == 0:
+            r2 = rtx_raw(IPDONTCARE, _cmd([CMD_IDENTIFY]))
+            if not r:
                 return False
-            if (len(resp) != 1 or
-                (ord(resp[0]) != RESP_IDENTIFY_0 and
-                 ord(resp[0]) != RESP_IDENTIFY_1)):
+            if (len(r) != 1 or
+                (r[0] != RESP_IDENTIFY_0 and
+                 r[0] != RESP_IDENTIFY_1)):
                 self.rtxerr = COMMS_FAULT
                 return False
-            self.current_ip = ord(resp[0]) & RESP_IDENTIFY_MASK
-        elif ord(resp[0]) == RESP_IDENTIFY_0 or ord(resp[0]) == RESP_IDENTIFY_1:
-            self.current_ip = ord(resp[0]) & RESP_IDENTIFY_MASK
+            self.current_ip = r[0] & RESP_IDENTIFY_MASK
+        elif r[0] == RESP_IDENTIFY_0 or r[0] == RESP_IDENTIFY_1:
+            self.current_ip = r[0] & RESP_IDENTIFY_MASK
         else:
             self.rtxerr = COMMS_FAULT
             return False
@@ -513,12 +502,12 @@ class UMI(object):
             return False
 
         if toggle_mode:
-            resp = self.raw(IPDONTCARE, umi_cmd((CMD_TOGGLE_ON)))
-            if len(resp) != 1 or ord(resp[0]) != RESP_ACK:
+            r = self.raw(IPDONTCARE, _cmd([CMD_TOGGLE_ON]))
+            if len(r) != 1 or r[0] != RESP_ACK:
                 self.rtxerr = COMMS_FAULT
                 return False
-            resp = self.raw(IPDONTCARE, umi_cmd((CMD_TOGGLE_ON)))
-            if len(resp) != 1 or ord(resp[0]) != RESP_ACK:
+            r = self.raw(IPDONTCARE, _cmd([CMD_TOGGLE_ON]))
+            if len(r) != 1 or r[0] != RESP_ACK:
                 self.rtxerr = COMMS_FAULT
                 return False
 
@@ -545,6 +534,5 @@ if __name__=='__main__':
     cmd.append(CMD_IDENTIFY)
 
     # little hack
-    resp = umi.comms_init(1)
-    print 'got respons: %s' % (repr(resp))
-
+    r = umi.comms_init(1)
+    print 'got rons: %s' % (repr(r))
